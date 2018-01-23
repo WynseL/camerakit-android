@@ -30,6 +30,8 @@ public class CameraKit {
 
         public static final int METHOD_STANDARD = 0;
         public static final int METHOD_STILL = 1;
+        public static final int METHOD_AF_STANDARD = 2;
+        public static final int METHOD_AF_STILL = 3;
 
         public static final int PERMISSIONS_STRICT = 0;
         public static final int PERMISSIONS_LAZY = 1;

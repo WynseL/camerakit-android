@@ -30,6 +30,8 @@ import static com.wonderkiln.camerakit.CameraKit.Constants.FLASH_OFF;
 import static com.wonderkiln.camerakit.CameraKit.Constants.FOCUS_CONTINUOUS;
 import static com.wonderkiln.camerakit.CameraKit.Constants.FOCUS_OFF;
 import static com.wonderkiln.camerakit.CameraKit.Constants.FOCUS_TAP;
+import static com.wonderkiln.camerakit.CameraKit.Constants.METHOD_AF_STANDARD;
+import static com.wonderkiln.camerakit.CameraKit.Constants.METHOD_AF_STILL;
 import static com.wonderkiln.camerakit.CameraKit.Constants.METHOD_STANDARD;
 import static com.wonderkiln.camerakit.CameraKit.Constants.METHOD_STILL;
 
@@ -476,6 +478,70 @@ public class Camera1 extends CameraImpl {
                     });
                     break;
                 }
+            case METHOD_AF_STANDARD: {
+                synchronized (mCameraLock) {
+                    if (!capturingImage && mCamera != null) {
+
+                        capturingImage = true;
+
+                        int captureRotation = calculateCaptureRotation();
+                        mCameraParameters.setRotation(captureRotation);
+                        mCamera.setParameters(mCameraParameters);
+
+                        focusHandler(0.001000f, 0.020000f, new Camera.PictureCallback() {
+                            @Override
+                            public void onPictureTaken(byte[] data, Camera camera) {
+                                callback.imageCaptured(data);
+                                capturingImage = false;
+
+                                synchronized (mCameraLock) {
+                                    if (isCameraOpened()) {
+                                        try {
+                                            stop();
+                                            start();
+                                        } catch (Exception e) {
+                                            notifyErrorListener(e);
+                                        }
+                                    }
+                                }
+                            }
+                        }, null);
+                    } else {
+                        Log.w(TAG, "Unable, waiting for picture to be taken");
+                    }
+                    break;
+                }
+            }
+            case METHOD_AF_STILL : {
+                synchronized (mCameraLock) {
+                    focusHandler(0.001000f, 0.020000f, null, new Camera.PreviewCallback() {
+                        @Override
+                        public void onPreviewFrame(byte[] data, Camera camera) {
+                            Camera.Parameters parameters = camera.getParameters();
+                            int width = parameters.getPreviewSize().width;
+                            int height = parameters.getPreviewSize().height;
+                            int rotation = calculateCaptureRotation();
+
+                            YuvOperator yuvOperator = new YuvOperator(data, width, height);
+                            yuvOperator.rotate(rotation);
+                            data = yuvOperator.getYuvData();
+
+                            int yuvOutputWidth = width;
+                            int yuvOutputHeight = height;
+                            if (rotation == 90 || rotation == 270) {
+                                yuvOutputWidth = height;
+                                yuvOutputHeight = width;
+                            }
+
+                            YuvImage yuvImage = new YuvImage(data, parameters.getPreviewFormat(), yuvOutputWidth, yuvOutputHeight, null);
+                            ByteArrayOutputStream out = new ByteArrayOutputStream();
+                            yuvImage.compressToJpeg(new Rect(0, 0, yuvImage.getWidth(), yuvImage.getHeight()), 100, out);
+                            callback.imageCaptured(out.toByteArray());
+                        }
+                    });
+                    break;
+                }
+            }
         }
     }
 
@@ -1074,6 +1140,77 @@ public class Camera1 extends CameraImpl {
                 }
             }
         }, DELAY_MILLIS_BEFORE_RESETTING_FOCUS);
+    }
+
+    private void focusHandler(float x, float y,
+                              final Camera.PictureCallback pictureCallback,
+                              final Camera.PreviewCallback previewCallback) {
+        if (mCamera != null) {
+            Camera.Parameters parameters = getCameraParameters();
+            if (parameters == null) return;
+
+            String focusMode = parameters.getFocusMode();
+            Rect rect = calculateFocusArea(x, y);
+
+            List<Camera.Area> meteringAreas = new ArrayList<>();
+            meteringAreas.add(new Camera.Area(rect, getFocusMeteringAreaWeight()));
+            if (parameters.getMaxNumFocusAreas() != 0 && focusMode != null &&
+                    (focusMode.equals(Camera.Parameters.FOCUS_MODE_AUTO) ||
+                            focusMode.equals(Camera.Parameters.FOCUS_MODE_MACRO) ||
+                            focusMode.equals(Camera.Parameters.FOCUS_MODE_CONTINUOUS_PICTURE) ||
+                            focusMode.equals(Camera.Parameters.FOCUS_MODE_CONTINUOUS_VIDEO))
+                    ) {
+                parameters.setFocusMode(Camera.Parameters.FOCUS_MODE_AUTO);
+                parameters.setFocusAreas(meteringAreas);
+                if (parameters.getMaxNumMeteringAreas() > 0) {
+                    parameters.setMeteringAreas(meteringAreas);
+                }
+                if (!parameters.getSupportedFocusModes().contains(Camera.Parameters.FOCUS_MODE_AUTO)) {
+                    if (pictureCallback != null) mCamera.takePicture(null, null, pictureCallback);
+                    if (previewCallback != null) mCamera.setOneShotPreviewCallback(previewCallback);
+                    return; //cannot autoFocus
+                }
+                mCamera.setParameters(parameters);
+                mCamera.autoFocus(new Camera.AutoFocusCallback() {
+                    @Override
+                    public void onAutoFocus(boolean success, Camera camera) {
+                        resetFocus(success, camera);
+                        if (pictureCallback != null) camera.takePicture(null, null, pictureCallback);
+                        if (previewCallback != null) camera.setOneShotPreviewCallback(previewCallback);
+                    }
+                });
+            } else if (parameters.getMaxNumMeteringAreas() > 0) {
+                if (!parameters.getSupportedFocusModes().contains(Camera.Parameters.FOCUS_MODE_AUTO)) {
+                    if (pictureCallback != null) mCamera.takePicture(null, null, pictureCallback);
+                    if (previewCallback != null) mCamera.setOneShotPreviewCallback(previewCallback);
+                    return; //cannot autoFocus
+                }
+                parameters.setFocusMode(Camera.Parameters.FOCUS_MODE_AUTO);
+                parameters.setFocusAreas(meteringAreas);
+                parameters.setMeteringAreas(meteringAreas);
+
+                mCamera.setParameters(parameters);
+                mCamera.autoFocus(new Camera.AutoFocusCallback() {
+                    @Override
+                    public void onAutoFocus(boolean success, Camera camera) {
+                        resetFocus(success, camera);
+                        if (pictureCallback != null) camera.takePicture(null, null, pictureCallback);
+                        if (previewCallback != null) camera.setOneShotPreviewCallback(previewCallback);
+                    }
+                });
+            } else {
+                mCamera.autoFocus(new Camera.AutoFocusCallback() {
+                    @Override
+                    public void onAutoFocus(boolean success, Camera camera) {
+                        if (mAutofocusCallback != null) {
+                            mAutofocusCallback.onAutoFocus(success, camera);
+                        }
+                        if (pictureCallback != null) camera.takePicture(null, null, pictureCallback);
+                        if (previewCallback != null) camera.setOneShotPreviewCallback(previewCallback);
+                    }
+                });
+            }
+        }
     }
 
     private Rect calculateFocusArea(float x, float y) {
