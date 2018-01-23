@@ -15,6 +15,7 @@ import android.support.v4.content.ContextCompat;
 import android.support.v4.hardware.display.DisplayManagerCompat;
 import android.support.v4.view.ViewCompat;
 import android.util.AttributeSet;
+import android.util.Log;
 import android.view.Display;
 import android.view.MotionEvent;
 import android.view.Surface;
@@ -146,8 +147,18 @@ public class CameraView extends FrameLayout {
             mDisplayOrientationDetector = new DisplayOrientationDetector(context) {
                 @Override
                 public void onDisplayOrDeviceOrientationChanged(int displayOrientation, int deviceOrientation) {
+                    /*
+                    fyi - Lock orientation to portrait
+                    Set parameters to 0 for preview and camera output, since according to my
+                    understanding, is a portrait orientation.
+                     */
+                    mCameraImpl.setDisplayAndDeviceOrientation(0, 0);
+                    mPreviewImpl.setDisplayOrientation(0);
+                    /*
+                    fyi - Leave as comment for now :D
                     mCameraImpl.setDisplayAndDeviceOrientation(displayOrientation, deviceOrientation);
                     mPreviewImpl.setDisplayOrientation(displayOrientation);
+                    */
                 }
             };
 
